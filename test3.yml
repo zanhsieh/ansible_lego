@@ -1,0 +1,18 @@
+---
+- hosts: localhost
+  vars:
+    users:
+      - {a: 'ua'}
+      - {a: 'ub'}
+    admins:
+      - {c: 'aa'}
+      - {c: 'ab'}
+
+  tasks:
+    - set_fact:
+        test: "{{ test|default([]) + [{'a': item.0.a, 'c': item.1.c}]}}"
+      with_together:
+        - "{{ users }}"
+        - "{{ admins }}"
+   
+    - debug: var=test

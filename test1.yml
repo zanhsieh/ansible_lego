@@ -1,0 +1,19 @@
+---
+- hosts: 10.0.40.42
+  var_files:
+    - vars/lego.yml
+  roles:
+    - { role: "ansible-lego", become: "yes" }
+#- hosts: localhost
+#  tasks:
+#  - name: local ls -la
+#    become: true
+#    shell: echo "test" > /tmp/test.log
+#- hosts: 10.0.40.42
+#  tasks:
+#  - name: remote ls -la
+#    become: true
+#    shell: echo "test" > /tmp/test.log
+# name: "Download lego"
+# name: "Extract lego"
+

@@ -1,0 +1,6 @@
+.vagrant
+certs/*
+lego/*
+lego_*.tar.xz
+lego_*.tar.gz
+.*.swp

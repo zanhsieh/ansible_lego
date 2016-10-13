@@ -1,0 +1,55 @@
+---
+- hosts: localhost
+  connection: local
+  vars:
+    api_server:
+      staging: 'https://acme-staging.api.letsencrypt.org/directory'
+      production: 'https://acme-v01.api.letsencrypt.org/directory'
+    workdir: 'certs/{{ vpc }}'
+    lego_args: >-
+      --accept-tos
+      --dns route53
+      --path {{ workdir }}
+      --email mingchin@gogotech.hk
+      --exclude http-01
+      --exclude tls-sni-01
+    staging: yes
+    domains:
+      - { base: 'test-exp1.example.com', subs: ['address', 'country', 'register', 'www'] }
+      - { base: 'test-exp2.example.com', subs: ['home', 'address', 'country', 'register', 'www'] }
+      - { base: 'test-exp3.example.com', subs: ['country', 'register', 'www'] }
+  tasks:
+    - stat: path='{{ workdir }}/certificates/{{ item.base }}.crt'
+      with_items: domains
+      register: cert_files
+
+    - name: set lego actions fact
+      set_fact:
+        actions: "{{ actions|default([]) + [ (item.stat.exists == true) | ternary('renew', 'run')] }}"
+      with_items: cert_files.results
+
+    - name: print actions
+      debug: var=actions
+
+    - name: set command prefix fact
+      set_fact:
+        command_prefix: 
+          "{{ command_prefix | default([]) + 
+          ['lego/lego ' + lego_args + 
+           ' --server ' + (staging == true) | ternary(api_server.staging, api_server.production) + 
+           ' -d ' + item.base + 
+           ' -d ' + item.subs | map('map_format', '%s.'+item.base) | list | join(' -d ')]}}"
+      with_items: domains
+
+    - name: print command prefix string
+      debug: var=command_prefix
+
+    - name: generate lego_cmds
+      set_fact:
+        lego_cmds: "{{ lego_cmds|default([]) + ['%s %s' % (item.0, item.1)] }}"
+      with_together:
+        - command_prefix
+        - actions
+
+    - name: print lego_cmds
+      debug: var=lego_cmds

@@ -1,0 +1,114 @@
+---
+- name: "Generate SSL certificates with letsencrypt.org"
+  hosts: localhost
+  connection: local
+  environment:
+    AWS_REGION: 'ap-northeast-2'
+    AWS_ACCESS_KEY_ID: 'REDACTED'
+    AWS_SECRET_ACCESS_KEY: 'REDACTED'
+  vars:
+    api_server:
+      staging: 'https://acme-staging.api.letsencrypt.org/directory'
+      production: 'https://acme-v01.api.letsencrypt.org/directory'
+    debug: yes
+    lego_args: >-
+      --accept-tos
+      --dns route53
+      --path {{ workdir }}
+      --email webmaster@localhost
+      --exclude http-01
+      --exclude tls-sni-01
+    lego_command: renew
+    lego_version: 'v0.3.1'
+    staging: yes
+    workdir: 'certs/{{ vpc }}'
+    goos: 'linux'
+    goarch: 'amd64'
+    domains:
+      - { base: 'test-exp1.example.com', subs: ['address', 'country', 'register', 'www'] }
+      - { base: 'test-exp2.example.com', subs: ['home', 'address', 'country', 'register', 'www'] }
+      - { base: 'test-exp3.example.com', subs: ['country', 'register', 'www'] }
+
+  tasks:
+    - name: create work directory
+      file: path='{{ workdir }}/certificates' state=directory mode=0700
+
+    - name: check lego binary
+      stat: path='lego/lego'
+      register: lego_binary
+
+    - name: check lego archive downloaded
+      stat: path='lego_{{ goos }}_{{ goarch }}.tar.xz'
+      register: lego_archive
+
+    - name: download lego from github release
+      become: yes
+      get_url:
+        url: https://github.com/xenolf/lego/releases/download/{{ lego_version }}/lego_{{ goos }}_{{ goarch }}.tar.xz
+        dest: .
+        force: yes
+      when:
+        - not lego_binary.stat.exists
+        - not lego_archive.stat.exists
+
+    - name: unarchive downloaded
+      become: yes
+      unarchive:
+        src: ./lego_{{ goos }}_{{ goarch }}.tar.xz
+        dest: .
+      when: 
+        - lego_archive.stat.exists
+
+    - stat: path='{{ workdir }}/certificates/{{ item.base }}.crt'
+      with_items: "{{ domains }}"
+      register: cert_files
+
+    - name: set lego actions fact
+      set_fact:
+        actions: "{{ actions|default([]) + [ (item.stat.exists == true) | ternary('renew', 'run')] }}"
+      with_items: "{{ cert_files.results }}"
+
+    - name: print actions
+      debug: var=actions
+      when: debug
+
+    - name: compute command prefix fact
+      set_fact: 
+        command_prefix:
+          "{{ command_prefix | default([]) +
+          ['lego/lego ' + lego_args +
+           ' --server ' + (staging == true) | ternary(api_server.staging, api_server.production) +
+           ' -d ' + item.base +
+           ' -d ' + item.subs | map('map_format', '%s.'+item.base) | list | join(' -d ')]}}"
+      with_items: "{{ domains }}" 
+
+    - name: print command prefix string
+      debug: var=command_prefix
+      when: debug
+
+    - name: generate lego_cmds
+      set_fact:
+        lego_cmds: "{{ lego_cmds|default([]) + ['%s %s 2>&1 | tee %s/lego-%s.log' % (item.0, item.1, workdir, item.2.base)] }}"
+      with_together:
+        - "{{ command_prefix }}"
+        - "{{ actions }}"
+        - "{{ domains }}"
+
+    - name: print lego_cmds
+      debug: var=lego_cmds
+      when: debug
+
+    - name: create certificate (it may take some time)
+      shell: '{{ item }}'
+      register: output
+      with_items: "{{ lego_cmds }}"
+
+    - debug: var=output
+      when: debug
+
+    - name: split certficate and chain from bundle
+      shell: csplit -kf {{ item.base }}.pem_ {{ item.base }}.crt '/END CERTIFICATE/+1'
+      args:
+        chdir: '{{ workdir }}/certificates'
+        creates: '{{ item.base }}.pem_0*'
+      with_items: "{{ domains }}"
